@@ -26,7 +26,7 @@ export WORKER_MIN_DURATION=5
 export WORKER_MAX_DURATION=120
 ```
 
-`CDK_CLI_PATH` defaults to `cdk-cli`, `CDK_WORK_DIR` defaults to `$STATE_DIR/cdk-cli`, `CDK_ENGINE` defaults to `redb`, and `NIXOS_CONTAINER_BIN` defaults to `nixos-container`. `WORKER_PRICES` entries use `mint_url:price_per_second:unit`; `price_per_second` must be a positive integer.
+`CDK_CLI_PATH` defaults to `cdk-cli`, `CDK_WORK_DIR` defaults to `$STATE_DIR/cdk-cli`, `CDK_ENGINE` defaults to `redb`, `NIXOS_CONTAINER_BIN` defaults to `nixos-container`, and `HTTP_ADDR` defaults to `127.0.0.1`. `WORKER_PRICES` entries use `mint_url:price_per_second:unit`; `price_per_second` must be a positive integer.
 
 On startup the controller runs `cdk-cli check-pending` for each configured payment unit using:
 

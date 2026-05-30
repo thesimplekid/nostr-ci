@@ -50,6 +50,7 @@ let
     POLL_INTERVAL = toString cfg.pollInterval;
     JOB_TIMEOUT = toString cfg.jobTimeout;
     ADVERTISE_INTERVAL = toString cfg.advertiseInterval;
+    HTTP_ADDR = cfg.httpAddress;
     HTTP_PORT = toString cfg.httpPort;
     STATE_DIR = cfg.stateDir;
     CDK_CLI_PATH = cfg.cdkCliPath;
@@ -215,6 +216,12 @@ in
       type = lib.types.ints.positive;
       default = 300;
       description = "Worker advertisement interval in seconds.";
+    };
+
+    httpAddress = lib.mkOption {
+      type = lib.types.str;
+      default = "127.0.0.1";
+      description = "Address for the controller HTTP status server to bind.";
     };
 
     httpPort = lib.mkOption {

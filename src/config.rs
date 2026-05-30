@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -48,6 +49,7 @@ pub struct Config {
     pub cdk_work_dir: PathBuf,
     pub cdk_engine: String,
     pub nixos_container_bin: PathBuf,
+    pub http_addr: IpAddr,
     pub http_port: u16,
 }
 
@@ -94,6 +96,7 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| state_dir.join("cdk-cli"));
 
+        let http_addr = parse_or_default(&get, "HTTP_ADDR", "127.0.0.1")?;
         let http_port = parse_or_default(&get, "HTTP_PORT", "8080")?;
         let worker_http_port = parse_or_default(&get, "WORKER_HTTP_PORT", "8081")?;
 
@@ -134,6 +137,7 @@ impl Config {
             nixos_container_bin: get("NIXOS_CONTAINER_BIN")
                 .unwrap_or_else(|| "nixos-container".to_string())
                 .into(),
+            http_addr,
             http_port,
         })
     }
@@ -286,6 +290,7 @@ mod tests {
         );
         assert_eq!(config.cdk_engine, "redb");
         assert_eq!(config.nixos_container_bin, PathBuf::from("nixos-container"));
+        assert_eq!(config.http_addr, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(config.worker_ngit_path, "/usr/local/bin/ngit");
         assert_eq!(
             config.worker_git_remote_nostr_path,
@@ -327,6 +332,7 @@ mod tests {
             ("CDK_CLI_PATH", "/opt/cdk-cli"),
             ("CDK_WORK_DIR", "/srv/cdk-wallet"),
             ("CDK_ENGINE", "sqlite"),
+            ("HTTP_ADDR", "0.0.0.0"),
             (
                 "NIXOS_CONTAINER_BIN",
                 "/run/current-system/sw/bin/nixos-container",
@@ -341,6 +347,7 @@ mod tests {
             config.nixos_container_bin,
             PathBuf::from("/run/current-system/sw/bin/nixos-container")
         );
+        assert_eq!(config.http_addr, IpAddr::from([0, 0, 0, 0]));
     }
 
     #[test]

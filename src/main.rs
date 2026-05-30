@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         advertise_interval = ?config.advertise_interval,
         relays = ?config.relays,
         worker_service = %config.worker_service_name,
+        http_addr = %config.http_addr,
         http_port = config.http_port,
         "Configuration loaded"
     );
@@ -87,7 +88,7 @@ async fn main() -> Result<()> {
             advertise_interval_seconds: config.advertise_interval.as_secs(),
         },
     };
-    let http_addr: SocketAddr = ([0, 0, 0, 0], config.http_port).into();
+    let http_addr = SocketAddr::new(config.http_addr, config.http_port);
     let http_shutdown_rx = shutdown_tx.subscribe();
     tokio::spawn(http::run_server(http_addr, http_state, http_shutdown_rx));
 
