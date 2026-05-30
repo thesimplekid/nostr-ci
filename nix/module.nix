@@ -276,9 +276,8 @@ in
       default = null;
       example = lib.literalExpression "./ci-container-template.nix";
       description = ''
-        Optional NixOS container template installed as
-        /etc/nixos/ci-container-template.nix. If unset, that file must already
-        exist on the host.
+        NixOS container template installed as
+        /etc/nixos/ci-container-template.nix and used for worker containers.
       '';
     };
 
@@ -329,6 +328,10 @@ in
       {
         assertion = cfg.workerMinDuration <= cfg.workerMaxDuration;
         message = "services.runner-controller.workerMinDuration must be <= workerMaxDuration.";
+      }
+      {
+        assertion = cfg.containerTemplate != null;
+        message = "services.runner-controller.containerTemplate must point to the worker NixOS container module.";
       }
     ];
 

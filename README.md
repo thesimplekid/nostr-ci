@@ -26,7 +26,7 @@ export WORKER_MIN_DURATION=5
 export WORKER_MAX_DURATION=120
 ```
 
-`CDK_CLI_PATH` defaults to `cdk-cli`, `CDK_WORK_DIR` defaults to `$STATE_DIR/cdk-cli`, `CDK_ENGINE` defaults to `redb`, `NIXOS_CONTAINER_BIN` defaults to `nixos-container`, `CONTAINER_TEMPLATE` defaults to `/etc/nixos/ci-container-template.nix`, and `HTTP_ADDR` defaults to `127.0.0.1`. `WORKER_PRICES` entries use `mint_url:price_per_second:unit`; `price_per_second` must be a positive integer.
+`CDK_CLI_PATH` defaults to `cdk-cli`, `CDK_WORK_DIR` defaults to `$STATE_DIR/cdk-cli`, `CDK_ENGINE` defaults to `redb`, `NIXOS_CONTAINER_BIN` defaults to `nixos-container`, `CONTAINER_TEMPLATE` defaults to `/etc/nixos/ci-container-template.nix`, and `HTTP_ADDR` defaults to `127.0.0.1`. `WORKER_PRICES` entries use `mint_url:price_per_second:unit`; `price_per_second` must be a positive integer. When using the NixOS module, set `services.runner-controller.containerTemplate` so the module installs the worker container template at the expected path.
 
 On startup the controller runs `cdk-cli check-pending` for each configured payment unit using:
 
@@ -208,8 +208,8 @@ Example host configuration:
             workerMinDuration = 5;
             workerMaxDuration = 120;
 
-            # Optional: install the worker container template at the path
-            # currently expected by the controller.
+            # Install the worker container template at the path
+            # expected by the controller.
             containerTemplate = ./ci-container-template.nix;
           };
         })
@@ -221,7 +221,7 @@ Example host configuration:
 
 The module runs `runner-controller` as root because it manages NixOS containers, systemd units, and network interfaces. It creates `STATE_DIR`, `CDK_WORK_DIR`, and `WORKER_WORK_DIR` with systemd-tmpfiles.
 
-The module does not package `cdk-cli` v0.16.0. Install and verify that binary separately, then set `services.runner-controller.cdkCliPath` to its absolute path. The module passes the NixOS-generated `nixos-container` executable by default; override `services.runner-controller.nixosContainerBin` only for custom host layouts. If `containerTemplate` is not set, `/etc/nixos/ci-container-template.nix` must already exist on the host.
+The module does not package `cdk-cli` v0.16.0. Install and verify that binary separately, then set `services.runner-controller.cdkCliPath` to its absolute path. The module passes the NixOS-generated `nixos-container` executable by default; override `services.runner-controller.nixosContainerBin` only for custom host layouts. `services.runner-controller.containerTemplate` is required because the controller cannot spawn worker containers without a valid NixOS container module.
 
 ## Tests
 
