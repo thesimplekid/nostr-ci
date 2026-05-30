@@ -49,6 +49,7 @@ pub struct Config {
     pub cdk_work_dir: PathBuf,
     pub cdk_engine: String,
     pub nixos_container_bin: PathBuf,
+    pub container_template: PathBuf,
     pub http_addr: IpAddr,
     pub http_port: u16,
 }
@@ -136,6 +137,9 @@ impl Config {
             cdk_engine: get("CDK_ENGINE").unwrap_or_else(|| "redb".to_string()),
             nixos_container_bin: get("NIXOS_CONTAINER_BIN")
                 .unwrap_or_else(|| "nixos-container".to_string())
+                .into(),
+            container_template: get("CONTAINER_TEMPLATE")
+                .unwrap_or_else(|| "/etc/nixos/ci-container-template.nix".to_string())
                 .into(),
             http_addr,
             http_port,
@@ -290,6 +294,10 @@ mod tests {
         );
         assert_eq!(config.cdk_engine, "redb");
         assert_eq!(config.nixos_container_bin, PathBuf::from("nixos-container"));
+        assert_eq!(
+            config.container_template,
+            PathBuf::from("/etc/nixos/ci-container-template.nix")
+        );
         assert_eq!(config.http_addr, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(config.worker_ngit_path, "/usr/local/bin/ngit");
         assert_eq!(
@@ -337,6 +345,10 @@ mod tests {
                 "NIXOS_CONTAINER_BIN",
                 "/run/current-system/sw/bin/nixos-container",
             ),
+            (
+                "CONTAINER_TEMPLATE",
+                "/srv/runner/ci-container-template.nix",
+            ),
         ])
         .unwrap();
 
@@ -346,6 +358,10 @@ mod tests {
         assert_eq!(
             config.nixos_container_bin,
             PathBuf::from("/run/current-system/sw/bin/nixos-container")
+        );
+        assert_eq!(
+            config.container_template,
+            PathBuf::from("/srv/runner/ci-container-template.nix")
         );
         assert_eq!(config.http_addr, IpAddr::from([0, 0, 0, 0]));
     }

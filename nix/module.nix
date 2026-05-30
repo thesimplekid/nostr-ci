@@ -57,6 +57,7 @@ let
     CDK_WORK_DIR = cdkWorkDir;
     CDK_ENGINE = cfg.cdkEngine;
     NIXOS_CONTAINER_BIN = cfg.nixosContainerBin;
+    CONTAINER_TEMPLATE = "/etc/nixos/ci-container-template.nix";
     RUST_LOG = cfg.logLevel;
   };
 in

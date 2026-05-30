@@ -379,6 +379,7 @@ mod tests {
             cdk_work_dir: PathBuf::from("/tmp/runner-controller-test/cdk-cli"),
             cdk_engine: "redb".to_string(),
             nixos_container_bin: PathBuf::from("nixos-container"),
+            container_template: PathBuf::from("/etc/nixos/ci-container-template.nix"),
             http_addr: "127.0.0.1".parse().unwrap(),
             http_port: 8080,
         }

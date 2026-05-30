@@ -39,12 +39,34 @@ pub struct ContainerManager {
 }
 
 impl ContainerManager {
-    pub fn new(nixos_container_bin: PathBuf, state_dir: PathBuf) -> Self {
+    pub fn new(
+        nixos_container_bin: PathBuf,
+        container_template: PathBuf,
+        state_dir: PathBuf,
+    ) -> Self {
         Self {
             nixos_container_bin,
-            container_template: PathBuf::from("/etc/nixos/ci-container-template.nix"),
+            container_template,
             state_dir,
         }
+    }
+
+    fn ensure_container_template_exists(&self) -> Result<()> {
+        if !self.container_template.exists() {
+            anyhow::bail!(
+                "container template {} does not exist; set CONTAINER_TEMPLATE to a valid NixOS container module path or configure services.runner-controller.containerTemplate in the NixOS module",
+                self.container_template.display()
+            );
+        }
+
+        if !self.container_template.is_file() {
+            anyhow::bail!(
+                "container template {} is not a regular file",
+                self.container_template.display()
+            );
+        }
+
+        Ok(())
     }
 
     /// Run nixos-container command and return output
@@ -225,6 +247,8 @@ impl ContainerManager {
         slot: usize,
         worker_config: &WorkerRuntimeConfig,
     ) -> Result<String> {
+        self.ensure_container_template_exists()?;
+
         let name = Self::slot_to_container_name(slot);
         let subnet = self.get_free_subnet().await?;
 
@@ -619,5 +643,24 @@ mod tests {
     fn shell_quote_handles_single_quotes() {
         assert_eq!(shell_quote("ngit"), "'ngit'");
         assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
+    }
+
+    #[test]
+    fn validates_container_template_path_before_spawn() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let template_path = tempdir.path().join("ci-container-template.nix");
+        let manager = ContainerManager::new(
+            PathBuf::from("nixos-container"),
+            template_path.clone(),
+            tempdir.path().to_path_buf(),
+        );
+
+        let missing_err = manager.ensure_container_template_exists().unwrap_err();
+        assert!(missing_err
+            .to_string()
+            .contains("set CONTAINER_TEMPLATE to a valid NixOS container module path"));
+
+        std::fs::write(&template_path, "{}").unwrap();
+        manager.ensure_container_template_exists().unwrap();
     }
 }

@@ -65,6 +65,7 @@ async fn main() -> Result<()> {
     // Initialize container manager
     let containers = Arc::new(ContainerManager::new(
         config.nixos_container_bin.clone(),
+        config.container_template.clone(),
         config.state_dir.clone(),
     ));
     tracing::info!("Container manager initialized");
