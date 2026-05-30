@@ -24,6 +24,8 @@ use state::StateDb;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    install_rustls_crypto_provider();
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer())
@@ -60,7 +62,10 @@ async fn main() -> Result<()> {
     tracing::info!("Nostr publisher initialized");
 
     // Initialize container manager
-    let containers = Arc::new(ContainerManager::new(config.state_dir.clone()));
+    let containers = Arc::new(ContainerManager::new(
+        config.nixos_container_bin.clone(),
+        config.state_dir.clone(),
+    ));
     tracing::info!("Container manager initialized");
 
     // Set up shutdown signal
@@ -125,4 +130,8 @@ async fn main() -> Result<()> {
     tracing::info!("runner-controller stopped");
 
     result
+}
+
+fn install_rustls_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }

@@ -1,9 +1,8 @@
 { self }:
-{
-  config,
-  lib,
-  pkgs,
-  ...
+{ config
+, lib
+, pkgs
+, ...
 }:
 let
   cfg = config.services.runner-controller;
@@ -19,12 +18,16 @@ let
       cfg.cdkWorkDir;
 
   toCsv = lib.concatMapStringsSep ",";
-  workerSoftware = toCsv (
-    software: "${software.name}:${software.version}:${software.path}"
-  ) cfg.workerSoftware;
-  workerPrices = toCsv (
-    price: "${price.mintUrl}:${toString price.pricePerSecond}:${price.unit}"
-  ) cfg.workerPrices;
+  workerSoftware = toCsv
+    (
+      software: "${software.name}:${software.version}:${software.path}"
+    )
+    cfg.workerSoftware;
+  workerPrices = toCsv
+    (
+      price: "${price.mintUrl}:${toString price.pricePerSecond}:${price.unit}"
+    )
+    cfg.workerPrices;
 
   baseEnvironment = {
     NOSTR_RELAYS = lib.concatStringsSep "," cfg.relays;
@@ -52,6 +55,7 @@ let
     CDK_CLI_PATH = cfg.cdkCliPath;
     CDK_WORK_DIR = cdkWorkDir;
     CDK_ENGINE = cfg.cdkEngine;
+    NIXOS_CONTAINER_BIN = cfg.nixosContainerBin;
     RUST_LOG = cfg.logLevel;
   };
 in
@@ -138,6 +142,13 @@ in
       ];
       default = "redb";
       description = "cdk-cli wallet database engine.";
+    };
+
+    nixosContainerBin = lib.mkOption {
+      type = lib.types.str;
+      default = lib.getExe config.system.build.nixos-container;
+      defaultText = lib.literalExpression "lib.getExe config.system.build.nixos-container";
+      description = "Path to the nixos-container executable used to manage worker containers.";
     };
 
     workerName = lib.mkOption {

@@ -47,6 +47,7 @@ pub struct Config {
     pub cdk_cli_path: String,
     pub cdk_work_dir: PathBuf,
     pub cdk_engine: String,
+    pub nixos_container_bin: PathBuf,
     pub http_port: u16,
 }
 
@@ -130,6 +131,9 @@ impl Config {
             cdk_cli_path: get("CDK_CLI_PATH").unwrap_or_else(|| "cdk-cli".to_string()),
             cdk_work_dir,
             cdk_engine: get("CDK_ENGINE").unwrap_or_else(|| "redb".to_string()),
+            nixos_container_bin: get("NIXOS_CONTAINER_BIN")
+                .unwrap_or_else(|| "nixos-container".to_string())
+                .into(),
             http_port,
         })
     }
@@ -281,6 +285,7 @@ mod tests {
             PathBuf::from("/var/lib/runner-controller/cdk-cli")
         );
         assert_eq!(config.cdk_engine, "redb");
+        assert_eq!(config.nixos_container_bin, PathBuf::from("nixos-container"));
         assert_eq!(config.worker_ngit_path, "/usr/local/bin/ngit");
         assert_eq!(
             config.worker_git_remote_nostr_path,
@@ -322,12 +327,20 @@ mod tests {
             ("CDK_CLI_PATH", "/opt/cdk-cli"),
             ("CDK_WORK_DIR", "/srv/cdk-wallet"),
             ("CDK_ENGINE", "sqlite"),
+            (
+                "NIXOS_CONTAINER_BIN",
+                "/run/current-system/sw/bin/nixos-container",
+            ),
         ])
         .unwrap();
 
         assert_eq!(config.cdk_cli_path, "/opt/cdk-cli");
         assert_eq!(config.cdk_work_dir, PathBuf::from("/srv/cdk-wallet"));
         assert_eq!(config.cdk_engine, "sqlite");
+        assert_eq!(
+            config.nixos_container_bin,
+            PathBuf::from("/run/current-system/sw/bin/nixos-container")
+        );
     }
 
     #[test]

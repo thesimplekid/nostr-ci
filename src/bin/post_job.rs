@@ -9,6 +9,8 @@ const JOB_REQUEST_KIND: u16 = 5100;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    install_rustls_crypto_provider();
+
     let relays = split_csv(required_env("NOSTR_RELAYS")?);
     let requester_keys = Keys::parse(&required_env("REQUESTER_NSEC")?)
         .context("REQUESTER_NSEC must be a valid nsec or hex secret key")?;
@@ -85,4 +87,8 @@ fn event_payload() -> Result<Value> {
         Ok(value) => serde_json::from_str(&value).context("JOB_EVENT_PAYLOAD must be valid JSON"),
         Err(_) => Ok(Value::Object(Default::default())),
     }
+}
+
+fn install_rustls_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
 }

@@ -39,9 +39,9 @@ pub struct ContainerManager {
 }
 
 impl ContainerManager {
-    pub fn new(state_dir: PathBuf) -> Self {
+    pub fn new(nixos_container_bin: PathBuf, state_dir: PathBuf) -> Self {
         Self {
-            nixos_container_bin: PathBuf::from("/run/current-system/sw/bin/nixos-container"),
+            nixos_container_bin,
             container_template: PathBuf::from("/etc/nixos/ci-container-template.nix"),
             state_dir,
         }
