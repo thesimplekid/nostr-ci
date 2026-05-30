@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use nostr::prelude::{nip44, EventBuilder, Keys, Kind, PublicKey, Tag};
+use nostr::prelude::{nip44, EventBuilder, FromBech32, Keys, Kind, Nip19Profile, PublicKey, Tag};
 use nostr_sdk::prelude::Client;
 use serde_json::Value;
 
@@ -11,11 +11,20 @@ const JOB_REQUEST_KIND: u16 = 5100;
 async fn main() -> Result<()> {
     install_rustls_crypto_provider();
 
-    let relays = split_csv(required_env("NOSTR_RELAYS")?);
+    let worker_target = worker_target()?;
+    let mut relays = env_relays();
+    if relays.is_empty() || !relay_env_only() {
+        relays.extend(worker_target.relays);
+    }
+    relays.sort();
+    relays.dedup();
+    if relays.is_empty() {
+        anyhow::bail!("NOSTR_RELAYS is required when the worker target has no relay hints");
+    }
+
     let requester_keys = Keys::parse(&required_env("REQUESTER_NSEC")?)
         .context("REQUESTER_NSEC must be a valid nsec or hex secret key")?;
-    let worker_pubkey = PublicKey::from_hex(&required_env("WORKER_PUBKEY")?)
-        .context("WORKER_PUBKEY must be a hex public key")?;
+    let worker_pubkey = worker_target.pubkey;
     let payment_token = required_env("PAYMENT_TOKEN")?;
 
     let payload = serde_json::json!({
@@ -64,6 +73,55 @@ async fn main() -> Result<()> {
     println!("{output:?}");
     client.disconnect().await;
     Ok(())
+}
+
+struct WorkerTarget {
+    pubkey: PublicKey,
+    relays: Vec<String>,
+}
+
+fn worker_target() -> Result<WorkerTarget> {
+    if let Some(value) = std::env::args().nth(1) {
+        return parse_worker_target(&value);
+    }
+    if let Ok(value) = std::env::var("WORKER_NPROFILE") {
+        return parse_worker_target(&value);
+    }
+    parse_worker_target(&required_env("WORKER_PUBKEY")?)
+}
+
+fn parse_worker_target(value: &str) -> Result<WorkerTarget> {
+    if value.starts_with("nprofile1") {
+        let profile = Nip19Profile::from_bech32(value)
+            .context("worker nprofile must be a valid NIP-19 profile")?;
+        return Ok(WorkerTarget {
+            pubkey: profile.public_key,
+            relays: profile
+                .relays
+                .into_iter()
+                .map(|relay| relay.to_string())
+                .collect(),
+        });
+    }
+
+    Ok(WorkerTarget {
+        pubkey: PublicKey::from_hex(value).context(
+            "WORKER_PUBKEY must be a hex public key, or pass WORKER_NPROFILE/an nprofile argument",
+        )?,
+        relays: Vec::new(),
+    })
+}
+
+fn env_relays() -> Vec<String> {
+    std::env::var("NOSTR_RELAYS")
+        .map(split_csv)
+        .unwrap_or_default()
+}
+
+fn relay_env_only() -> bool {
+    std::env::var("NOSTR_RELAYS_ONLY")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }
 
 fn required_env(key: &str) -> Result<String> {

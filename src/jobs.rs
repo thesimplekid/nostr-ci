@@ -296,8 +296,10 @@ fn validate_job(job: &WorkerJobRequest) -> Result<()> {
     if job.repo.trim().is_empty() {
         return Err(anyhow!("repo is required"));
     }
-    if !is_ngit_repo_url(&job.repo) {
-        return Err(anyhow!("repo must be an ngit nostr:// clone URL"));
+    if !is_supported_clone_url(&job.repo) {
+        return Err(anyhow!(
+            "repo must be an ngit nostr:// URL or an https:// Git clone URL"
+        ));
     }
     if job.ref_.trim().is_empty() {
         return Err(anyhow!("ref is required"));
@@ -314,9 +316,10 @@ fn validate_job(job: &WorkerJobRequest) -> Result<()> {
     Ok(())
 }
 
-fn is_ngit_repo_url(repo: &str) -> bool {
+fn is_supported_clone_url(repo: &str) -> bool {
     let trimmed = repo.trim();
-    trimmed.starts_with("nostr://") && trimmed.len() > "nostr://".len()
+    (trimmed.starts_with("nostr://") && trimmed.len() > "nostr://".len())
+        || (trimmed.starts_with("https://") && trimmed.len() > "https://".len())
 }
 
 fn default_event() -> String {
@@ -374,18 +377,33 @@ mod tests {
     }
 
     #[test]
-    fn parser_requires_ngit_nostr_repo_url() {
-        let github_repo = serde_json::json!({
-            "repo": "https://github.com/org/repo.git",
+    fn parser_rejects_unsupported_repo_url() {
+        let unsupported_repo = serde_json::json!({
+            "repo": "git@github.com:org/repo.git",
             "ref": "main",
             "workflow": ".github/workflows/ci.yml",
             "job": "test"
         })
         .to_string();
 
-        let err = parse_job_payload(&github_repo).unwrap_err();
+        let err = parse_job_payload(&unsupported_repo).unwrap_err();
 
-        assert!(err.to_string().contains("ngit nostr://"));
+        assert!(err.to_string().contains("https://"));
+    }
+
+    #[test]
+    fn parser_accepts_https_git_clone_url() {
+        let github_repo = serde_json::json!({
+            "repo": "https://github.com/cashubtc/cdk",
+            "ref": "main",
+            "workflow": ".github/workflows/nightly-rustfmt.yml",
+            "job": "format"
+        })
+        .to_string();
+
+        let job = parse_job_payload(&github_repo).unwrap();
+
+        assert_eq!(job.repo, "https://github.com/cashubtc/cdk");
     }
 
     #[test]

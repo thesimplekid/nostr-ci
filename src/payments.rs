@@ -419,13 +419,18 @@ fn unique_urls(output: &str) -> Vec<String> {
 }
 
 fn output_mentions_unit(output: &str, unit: &str) -> bool {
-    if output.contains(&format!("\"{unit}\"")) || output.contains(&format!("'{unit}'")) {
+    let output_lower = output.to_ascii_lowercase();
+    let unit_lower = unit.to_ascii_lowercase();
+
+    if output_lower.contains(&format!("\"{unit_lower}\""))
+        || output_lower.contains(&format!("'{unit_lower}'"))
+    {
         return true;
     }
 
-    output
+    output_lower
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .any(|word| word == unit)
+        .any(|word| word == unit_lower)
 }
 
 fn first_u64(value: &str) -> Option<u64> {
@@ -455,6 +460,27 @@ mod tests {
           "u": "sat",
           "t": [{"p": [{"a": 10}]}]
         })
+        "#;
+
+        let metadata = parse_token_metadata(output, &prices()).unwrap();
+
+        assert_eq!(
+            metadata,
+            TokenMetadata {
+                mint_url: "https://mint.example".to_string(),
+                unit: "sat".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_decode_token_metadata_with_capitalized_unit() {
+        let output = r#"
+        TokenV4 {
+            mint: "https://mint.example",
+            unit: Sat,
+            proofs: []
+        }
         "#;
 
         let metadata = parse_token_metadata(output, &prices()).unwrap();
