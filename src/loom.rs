@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use nostr::prelude::{Event, EventBuilder, Keys, Kind, Metadata, PublicKey, Tag, ToBech32};
+use nostr::prelude::{
+    Event, EventBuilder, Keys, Kind, Metadata, Nip19Profile, PublicKey, RelayUrl, Tag, ToBech32,
+};
 use nostr_sdk::prelude::{Client, Filter, RelayPoolNotification, Timestamp};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
@@ -196,6 +198,20 @@ pub fn build_advertisement_event(
         .context("Failed to sign worker advertisement")
 }
 
+pub fn build_worker_nprofile(relays: &[String], identity: &WorkerIdentity) -> Result<String> {
+    let relay_urls = relays
+        .iter()
+        .map(|relay| {
+            RelayUrl::parse(relay)
+                .with_context(|| format!("Invalid relay URL for worker nprofile: {relay}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Nip19Profile::new(identity.keys.public_key(), relay_urls)
+        .to_bech32()
+        .context("Failed to encode worker nprofile")
+}
+
 fn tag<const N: usize>(values: [&str; N]) -> Result<Tag> {
     Tag::parse(values).context("Failed to build Nostr tag")
 }
@@ -265,6 +281,7 @@ impl NostrPublisher {
         let metadata_event = EventBuilder::metadata(&metadata)
             .sign_with_keys(&identity.keys)
             .context("Failed to sign worker profile metadata")?;
+        let nprofile = build_worker_nprofile(&self.relays, identity)?;
 
         self.client
             .send_event(&metadata_event)
@@ -280,6 +297,9 @@ impl NostrPublisher {
         info!(
             slot = identity.slot,
             pubkey = %identity.pubkey,
+            nprofile = %nprofile,
+            metadata_event_id = %metadata_event.id,
+            advertisement_event_id = %advertisement.id,
             relays = ?self.relays,
             "Published worker advertisement"
         );
@@ -319,6 +339,7 @@ mod tests {
 
     use super::*;
     use crate::container::ContainerManager;
+    use nostr::prelude::FromBech32;
 
     fn test_config() -> Config {
         Config {
@@ -418,6 +439,25 @@ mod tests {
             "relay".to_string(),
             "wss://relay.example".to_string()
         ]));
+    }
+
+    #[test]
+    fn builds_worker_nprofile_with_relay_hints() {
+        let config = test_config();
+        let keys = Keys::generate();
+        let identity = WorkerIdentity {
+            slot: 0,
+            pubkey: keys.public_key().to_hex(),
+            keys,
+        };
+
+        let nprofile = build_worker_nprofile(&config.relays, &identity).unwrap();
+        let decoded = Nip19Profile::from_bech32(&nprofile).unwrap();
+
+        assert!(nprofile.starts_with("nprofile1"));
+        assert_eq!(decoded.public_key, identity.keys.public_key());
+        assert_eq!(decoded.relays.len(), 1);
+        assert_eq!(decoded.relays[0].as_str(), "wss://relay.example");
     }
 
     #[test]
