@@ -12,6 +12,7 @@ mod http;
 mod jobs;
 mod listener;
 mod loom;
+mod payments;
 mod state;
 
 use config::Config;

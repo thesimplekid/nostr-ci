@@ -2,18 +2,20 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use nostr::prelude::{Event, Kind};
 use nostr_sdk::prelude::RelayPoolNotification;
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
-use crate::container::ContainerManager;
+use crate::container::{ContainerManager, WORKER_HTTP_TIMEOUT_MESSAGE};
 use crate::jobs::{
-    decode_job_event, event_is_addressed_to, JobStatus, WorkerJobResponse, JOB_REQUEST_KIND,
+    decode_job_event, event_is_addressed_to, extract_payment_token, JobBilling, JobStatus,
+    WorkerJobResponse, JOB_REQUEST_KIND,
 };
 use crate::loom::{NostrPublisher, WorkerIdentity, WorkerRuntimeConfig};
+use crate::payments::{authorize_payment, settle_billing, PaymentClient};
 use crate::state::{ContainerState, StateDb};
 
 pub struct PoolController {
@@ -22,6 +24,7 @@ pub struct PoolController {
     publisher: Arc<NostrPublisher>,
     containers: Arc<ContainerManager>,
     state_db: Arc<StateDb>,
+    payments: PaymentClient,
     shutdown_rx: watch::Receiver<bool>,
     last_advertised: Option<Instant>,
 }
@@ -35,12 +38,14 @@ impl PoolController {
         state_db: Arc<StateDb>,
         shutdown_rx: watch::Receiver<bool>,
     ) -> Self {
+        let payments = PaymentClient::new(&config);
         Self {
             config,
             workers,
             publisher,
             containers,
             state_db,
+            payments,
             shutdown_rx,
             last_advertised: None,
         }
@@ -139,39 +144,139 @@ impl PoolController {
         };
         let identity = &self.workers[slot];
 
+        let payment_token = match extract_payment_token(event) {
+            Ok(token) => token,
+            Err(e) => {
+                warn!(slot, event_id = %event.id, error = %e, "Rejecting unpaid worker job");
+                self.publish_invalid_result(identity, event, e.to_string())
+                    .await;
+                return Ok(());
+            }
+        };
+
         let job = match decode_job_event(identity, event) {
             Ok(job) => job,
             Err(e) => {
                 warn!(slot, event_id = %event.id, error = %e, "Rejecting malformed worker job");
-                let response = WorkerJobResponse::invalid(e.to_string());
-                if let Err(publish_error) = self
-                    .publisher
-                    .publish_result(identity, event, &response)
-                    .await
-                {
-                    warn!(slot, event_id = %event.id, error = %publish_error, "Failed to publish invalid job result");
-                }
+                self.publish_invalid_result(identity, event, e.to_string())
+                    .await;
+                return Ok(());
+            }
+        };
+
+        let signing_key = identity.keys.secret_key().to_secret_hex();
+        let claimed_payment = match self
+            .payments
+            .claim_payment(
+                &payment_token,
+                &self.config.worker_prices,
+                Some(signing_key.as_str()),
+            )
+            .await
+        {
+            Ok(payment) => payment,
+            Err(e) => {
+                warn!(slot, event_id = %event.id, error = %e, "Rejecting worker job with invalid payment");
+                self.publish_invalid_result(identity, event, e.to_string())
+                    .await;
+                return Ok(());
+            }
+        };
+
+        let authorization = match authorize_payment(
+            claimed_payment,
+            &self.config.worker_prices,
+            self.config.worker_min_duration,
+            self.config.worker_max_duration,
+        ) {
+            Ok(authorization) => authorization,
+            Err(e) => {
+                warn!(slot, event_id = %event.id, error = %e, "Rejecting worker job with insufficient payment");
+                self.publish_invalid_result(identity, event, e.to_string())
+                    .await;
                 return Ok(());
             }
         };
 
         let name = ContainerManager::slot_to_container_name(slot);
-        let response = match self
+        let mut response = match self
             .containers
             .dispatch_job(
                 &name,
                 self.config.worker_http_port,
                 &job,
-                self.config.job_timeout,
+                authorization.timeout,
             )
             .await
         {
             Ok(response) => response,
             Err(e) => {
-                warn!(slot, name = %name, event_id = %event.id, error = %e, "Worker dispatch failed");
-                WorkerJobResponse::failure(e.to_string())
+                if is_worker_http_timeout(&e) {
+                    let timeout_seconds = authorization.timeout.as_secs();
+                    warn!(
+                        slot,
+                        name = %name,
+                        event_id = %event.id,
+                        timeout_seconds,
+                        "Paid runtime expired; killing timed-out worker container"
+                    );
+
+                    let mut response = WorkerJobResponse::timeout(
+                        format!("job exceeded paid runtime limit of {timeout_seconds} seconds"),
+                        timeout_seconds,
+                    );
+                    if let Err(kill_error) = self.respawn_pool_container(&name, slot).await {
+                        warn!(
+                            slot,
+                            name = %name,
+                            event_id = %event.id,
+                            error = %kill_error,
+                            "Failed to respawn timed-out worker container"
+                        );
+                        response.add_result_error(format!(
+                            "failed to stop timed-out worker: {kill_error}"
+                        ));
+                    }
+                    response
+                } else {
+                    warn!(slot, name = %name, event_id = %event.id, error = %e, "Worker dispatch failed");
+                    WorkerJobResponse::failure(e.to_string())
+                }
             }
         };
+
+        let billing = settle_billing(
+            &authorization,
+            response.elapsed_seconds,
+            self.config.worker_min_duration,
+        );
+        let change = if billing.change_amount > 0 {
+            match self
+                .payments
+                .send_change(
+                    &authorization.payment.mint_url,
+                    &authorization.payment.unit,
+                    billing.change_amount,
+                )
+                .await
+            {
+                Ok(token) => Some(token),
+                Err(e) => {
+                    let message = format!("refund failed: {e}");
+                    warn!(slot, event_id = %event.id, error = %message, "Failed to create payment change");
+                    response.add_result_error(message);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        response.with_billing(JobBilling::from_outcome(
+            billing,
+            authorization.payment.mint_url.clone(),
+            authorization.payment.unit.clone(),
+            change,
+        ));
 
         if matches!(response.status, JobStatus::Failure | JobStatus::Timeout) {
             warn!(
@@ -193,6 +298,22 @@ impl PoolController {
         }
 
         Ok(())
+    }
+
+    async fn publish_invalid_result(
+        &self,
+        identity: &WorkerIdentity,
+        event: &Event,
+        message: String,
+    ) {
+        let response = WorkerJobResponse::invalid(message);
+        if let Err(publish_error) = self
+            .publisher
+            .publish_result(identity, event, &response)
+            .await
+        {
+            warn!(slot = identity.slot, event_id = %event.id, error = %publish_error, "Failed to publish invalid job result");
+        }
     }
 
     fn slot_for_event(&self, event: &Event) -> Option<usize> {
@@ -320,6 +441,13 @@ impl PoolController {
         );
 
         self.reconcile_on_startup().await?;
+        if let Err(e) = self
+            .payments
+            .check_pending_for_prices(&self.config.worker_prices)
+            .await
+        {
+            warn!(error = %e, "Failed to run cdk-cli payment recovery on startup");
+        }
         self.publish_all_advertisements().await;
         if let Err(e) = self.publisher.subscribe_job_requests(&self.workers).await {
             warn!(error = %e, "Failed to subscribe for worker job requests");
@@ -376,4 +504,10 @@ impl PoolController {
         info!("Controller shutdown complete; worker containers left running for recovery");
         Ok(())
     }
+}
+
+fn is_worker_http_timeout(error: &Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.to_string() == WORKER_HTTP_TIMEOUT_MESSAGE)
 }

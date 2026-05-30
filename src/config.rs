@@ -44,6 +44,9 @@ pub struct Config {
     pub worker_git_remote_nostr_path: String,
     pub worker_work_dir: String,
     pub state_dir: PathBuf,
+    pub cdk_cli_path: String,
+    pub cdk_work_dir: PathBuf,
+    pub cdk_engine: String,
     pub http_port: u16,
 }
 
@@ -83,9 +86,12 @@ impl Config {
             anyhow::bail!("WORKER_MIN_DURATION must be less than or equal to WORKER_MAX_DURATION");
         }
 
-        let state_dir = get("STATE_DIR")
+        let state_dir: PathBuf = get("STATE_DIR")
             .unwrap_or_else(|| "/var/lib/runner-controller".to_string())
             .into();
+        let cdk_work_dir = get("CDK_WORK_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| state_dir.join("cdk-cli"));
 
         let http_port = parse_or_default(&get, "HTTP_PORT", "8080")?;
         let worker_http_port = parse_or_default(&get, "WORKER_HTTP_PORT", "8081")?;
@@ -121,6 +127,9 @@ impl Config {
             worker_work_dir: get("WORKER_WORK_DIR")
                 .unwrap_or_else(|| "/var/lib/loom-worker/work".to_string()),
             state_dir,
+            cdk_cli_path: get("CDK_CLI_PATH").unwrap_or_else(|| "cdk-cli".to_string()),
+            cdk_work_dir,
+            cdk_engine: get("CDK_ENGINE").unwrap_or_else(|| "redb".to_string()),
             http_port,
         })
     }
@@ -187,9 +196,14 @@ fn parse_worker_prices(value: &str) -> Result<Vec<WorkerPrice>> {
                 return Err(anyhow!("WORKER_PRICES mint_url must include a URL scheme"));
             }
             let price_per_second = non_empty(parts.1, "WORKER_PRICES price_per_second")?;
-            price_per_second
-                .parse::<f64>()
-                .context("WORKER_PRICES price_per_second must be numeric")?;
+            let parsed_price = price_per_second
+                .parse::<u64>()
+                .context("WORKER_PRICES price_per_second must be a positive integer")?;
+            if parsed_price == 0 {
+                return Err(anyhow!(
+                    "WORKER_PRICES price_per_second must be a positive integer"
+                ));
+            }
             Ok(WorkerPrice {
                 mint_url,
                 price_per_second,
@@ -261,6 +275,12 @@ mod tests {
         assert_eq!(config.worker_min_duration, 5);
         assert_eq!(config.worker_max_duration, 120);
         assert_eq!(config.worker_geohash.as_deref(), Some("u09tun"));
+        assert_eq!(config.cdk_cli_path, "cdk-cli");
+        assert_eq!(
+            config.cdk_work_dir,
+            PathBuf::from("/var/lib/runner-controller/cdk-cli")
+        );
+        assert_eq!(config.cdk_engine, "redb");
         assert_eq!(config.worker_ngit_path, "/usr/local/bin/ngit");
         assert_eq!(
             config.worker_git_remote_nostr_path,
@@ -290,5 +310,40 @@ mod tests {
         .unwrap_err();
 
         assert!(err.to_string().contains("mint_url must include"));
+    }
+
+    #[test]
+    fn parses_cdk_cli_overrides() {
+        let config = config_from(&[
+            ("NOSTR_RELAYS", "wss://relay.example"),
+            ("WORKER_SOFTWARE", "nix:2.24:/bin/nix"),
+            ("WORKER_PRICES", "https://mint.example:10:sat"),
+            ("STATE_DIR", "/tmp/runner-controller"),
+            ("CDK_CLI_PATH", "/opt/cdk-cli"),
+            ("CDK_WORK_DIR", "/srv/cdk-wallet"),
+            ("CDK_ENGINE", "sqlite"),
+        ])
+        .unwrap();
+
+        assert_eq!(config.cdk_cli_path, "/opt/cdk-cli");
+        assert_eq!(config.cdk_work_dir, PathBuf::from("/srv/cdk-wallet"));
+        assert_eq!(config.cdk_engine, "sqlite");
+    }
+
+    #[test]
+    fn rejects_non_integer_or_zero_prices() {
+        for price in ["0", "1.5"] {
+            let err = config_from(&[
+                ("NOSTR_RELAYS", "wss://relay.example"),
+                ("WORKER_SOFTWARE", "nix:2.24:/bin/nix"),
+                (
+                    "WORKER_PRICES",
+                    &format!("https://mint.example:{price}:sat"),
+                ),
+            ])
+            .unwrap_err();
+
+            assert!(err.to_string().contains("positive integer"));
+        }
     }
 }

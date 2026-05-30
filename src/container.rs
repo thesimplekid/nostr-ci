@@ -30,6 +30,7 @@ BindReadOnly=/run/agenix
 "#;
 
 const NGIT_INSTALL_URL: &str = "https://ngit.dev/install.sh";
+pub const WORKER_HTTP_TIMEOUT_MESSAGE: &str = "Timed out waiting for worker HTTP API";
 
 pub struct ContainerManager {
     nixos_container_bin: PathBuf,
@@ -518,7 +519,7 @@ pub async fn dispatch_http_job(
         Ok::<Vec<u8>, anyhow::Error>(response)
     })
     .await
-    .context("Timed out waiting for worker HTTP API")??;
+    .context(WORKER_HTTP_TIMEOUT_MESSAGE)??;
 
     parse_http_job_response(&response)
 }

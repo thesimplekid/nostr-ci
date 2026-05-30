@@ -354,6 +354,9 @@ mod tests {
             worker_git_remote_nostr_path: "/usr/local/bin/git-remote-nostr".to_string(),
             worker_work_dir: "/tmp/work".to_string(),
             state_dir: PathBuf::from("/tmp/runner-controller-test"),
+            cdk_cli_path: "cdk-cli".to_string(),
+            cdk_work_dir: PathBuf::from("/tmp/runner-controller-test/cdk-cli"),
+            cdk_engine: "redb".to_string(),
             http_port: 8080,
         }
     }
