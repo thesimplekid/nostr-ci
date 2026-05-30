@@ -2,17 +2,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
 use tokio::sync::watch;
 use tracing::info;
 
+use crate::config::{WorkerPrice, WorkerSoftware};
 use crate::state::StateDb;
 
 #[derive(Clone)]
@@ -22,7 +17,7 @@ pub struct AppState {
     pub pool_size: usize,
     pub poll_interval_seconds: u64,
     pub job_timeout_seconds: u64,
-    pub runner_startup_timeout_seconds: u64,
+    pub advertisement: AdvertisementSettings,
 }
 
 #[derive(Serialize)]
@@ -32,7 +27,7 @@ pub struct StatusResponse {
     pub containers: Vec<ContainerInfo>,
     pub poll_interval_seconds: u64,
     pub job_timeout_seconds: u64,
-    pub runner_startup_timeout_seconds: u64,
+    pub advertisement: AdvertisementSettings,
     pub uptime_seconds: u64,
 }
 
@@ -40,8 +35,19 @@ pub struct StatusResponse {
 pub struct ContainerInfo {
     pub name: String,
     pub slot: usize,
+    pub worker_pubkey: String,
     pub running_seconds: u64,
-    pub busy_seconds: Option<u64>,
+    pub advertised_at: Option<u64>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct AdvertisementSettings {
+    pub relays: Vec<String>,
+    pub software: Vec<WorkerSoftware>,
+    pub prices: Vec<WorkerPrice>,
+    pub min_duration: u64,
+    pub max_duration: u64,
+    pub advertise_interval_seconds: u64,
 }
 
 /// GET /health - simple health check
@@ -54,7 +60,10 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
     let db_containers = match state.state_db.list_containers() {
         Ok(c) => c,
         Err(_) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "Failed to list containers")
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to list containers",
+            )
                 .into_response()
         }
     };
@@ -65,7 +74,8 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
             name,
             slot: container_state.slot,
             running_seconds: container_state.running_seconds(),
-            busy_seconds: container_state.busy_seconds(),
+            worker_pubkey: container_state.worker_pubkey,
+            advertised_at: container_state.advertised_at,
         })
         .collect();
 
@@ -75,18 +85,14 @@ async fn status(State(state): State<AppState>) -> impl IntoResponse {
         containers,
         poll_interval_seconds: state.poll_interval_seconds,
         job_timeout_seconds: state.job_timeout_seconds,
-        runner_startup_timeout_seconds: state.runner_startup_timeout_seconds,
+        advertisement: state.advertisement,
         uptime_seconds: state.start_time.elapsed().as_secs(),
     };
 
     Json(response).into_response()
 }
 
-pub async fn run_server(
-    addr: SocketAddr,
-    state: AppState,
-    mut shutdown_rx: watch::Receiver<bool>,
-) {
+pub async fn run_server(addr: SocketAddr, state: AppState, mut shutdown_rx: watch::Receiver<bool>) {
     let app = Router::new()
         .route("/health", get(health))
         .route("/status", get(status))

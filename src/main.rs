@@ -8,16 +8,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod container;
-mod github;
 mod http;
+mod jobs;
 mod listener;
+mod loom;
 mod state;
 
 use config::Config;
 use container::ContainerManager;
-use github::GitHubClient;
-use http::AppState;
+use http::{AdvertisementSettings, AppState};
 use listener::PoolController;
+use loom::{NostrPublisher, WorkerKeyStore};
 use state::StateDb;
 
 #[tokio::main]
@@ -28,18 +29,18 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    tracing::info!("runner-controller (warm pool mode) starting");
+    tracing::info!("runner-controller (Loom worker pool mode) starting");
 
     let start_time = Instant::now();
 
     // Load configuration
     let config = Config::from_env()?;
     tracing::info!(
-        repo = %config.github_repo,
         pool_size = config.max_concurrent_jobs,
         poll_interval = ?config.poll_interval,
-        runner_startup_timeout = ?config.runner_startup_timeout,
-        labels = ?config.runner_labels,
+        advertise_interval = ?config.advertise_interval,
+        relays = ?config.relays,
+        worker_service = %config.worker_service_name,
         http_port = config.http_port,
         "Configuration loaded"
     );
@@ -48,19 +49,14 @@ async fn main() -> Result<()> {
     let state_db = Arc::new(StateDb::open(&config.state_dir)?);
     tracing::info!(state_dir = ?config.state_dir, "State database opened");
 
-    // Initialize GitHub client
-    let github = GitHubClient::new(config.github_repo.clone(), config.github_token.clone())?;
-    tracing::info!("GitHub client initialized");
+    // Load or create stable per-slot worker identities.
+    let key_store = WorkerKeyStore::new(&config.state_dir);
+    let workers = key_store.load_or_create_all(config.max_concurrent_jobs)?;
+    tracing::info!(count = workers.len(), "Worker identities loaded");
 
-    // Quick connectivity check
-    match github.list_runners().await {
-        Ok(runners) => {
-            tracing::info!(count = runners.len(), "Connected to GitHub API");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to list runners (will retry in main loop)");
-        }
-    }
+    // Initialize Nostr publisher.
+    let publisher = Arc::new(NostrPublisher::new(config.relays.clone()).await?);
+    tracing::info!("Nostr publisher initialized");
 
     // Initialize container manager
     let containers = Arc::new(ContainerManager::new(config.state_dir.clone()));
@@ -76,7 +72,14 @@ async fn main() -> Result<()> {
         pool_size: config.max_concurrent_jobs,
         poll_interval_seconds: config.poll_interval.as_secs(),
         job_timeout_seconds: config.job_timeout.as_secs(),
-        runner_startup_timeout_seconds: config.runner_startup_timeout.as_secs(),
+        advertisement: AdvertisementSettings {
+            relays: config.relays.clone(),
+            software: config.worker_software.clone(),
+            prices: config.worker_prices.clone(),
+            min_duration: config.worker_min_duration,
+            max_duration: config.worker_max_duration,
+            advertise_interval_seconds: config.advertise_interval.as_secs(),
+        },
     };
     let http_addr: SocketAddr = ([0, 0, 0, 0], config.http_port).into();
     let http_shutdown_rx = shutdown_tx.subscribe();
@@ -85,7 +88,8 @@ async fn main() -> Result<()> {
     // Create pool controller
     let mut controller = PoolController::new(
         config.clone(),
-        github,
+        workers,
+        Arc::clone(&publisher),
         Arc::clone(&containers),
         Arc::clone(&state_db),
         shutdown_rx,

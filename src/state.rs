@@ -12,11 +12,13 @@ pub struct ContainerState {
     pub slot: usize,
     pub started_at: u64, // unix timestamp
     #[serde(default)]
-    pub busy_since: Option<u64>, // unix timestamp, set only while GitHub reports busy
+    pub worker_pubkey: String,
+    #[serde(default)]
+    pub advertised_at: Option<u64>, // unix timestamp of last successful advertisement
 }
 
 impl ContainerState {
-    pub fn new(slot: usize) -> Self {
+    pub fn new(slot: usize, worker_pubkey: String) -> Self {
         let started_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("Time went backwards")
@@ -25,7 +27,8 @@ impl ContainerState {
         Self {
             slot,
             started_at,
-            busy_since: None,
+            worker_pubkey,
+            advertised_at: None,
         }
     }
 
@@ -46,22 +49,9 @@ impl ContainerState {
             .as_secs()
     }
 
-    /// Mark this runner as busy, preserving the first observed busy timestamp.
-    pub fn mark_busy(&mut self) {
-        if self.busy_since.is_none() {
-            self.busy_since = Some(Self::now_seconds());
-        }
-    }
-
-    /// Mark this runner as idle.
-    pub fn mark_idle(&mut self) {
-        self.busy_since = None;
-    }
-
-    /// Returns how long this runner has been observed as busy.
-    pub fn busy_seconds(&self) -> Option<u64> {
-        self.busy_since
-            .map(|busy_since| Self::now_seconds().saturating_sub(busy_since))
+    /// Mark the worker advertisement as successfully published.
+    pub fn mark_advertised(&mut self) {
+        self.advertised_at = Some(Self::now_seconds());
     }
 }
 
@@ -140,24 +130,5 @@ impl StateDb {
         }
 
         Ok(containers)
-    }
-
-    /// Clear all container states (used by explicit destructive cleanup paths)
-    pub fn clear_all(&self) -> Result<()> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(CONTAINERS_TABLE)?;
-            // Collect keys first to avoid borrowing issues
-            let keys: Vec<String> = table
-                .iter()?
-                .filter_map(|e| e.ok().map(|(k, _)| k.value().to_string()))
-                .collect();
-
-            for key in keys {
-                table.remove(key.as_str())?;
-            }
-        }
-        write_txn.commit()?;
-        Ok(())
     }
 }
